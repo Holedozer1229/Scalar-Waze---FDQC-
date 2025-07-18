@@ -15,7 +15,7 @@ T_c = l_p / c  # Planck time (s)
 kappa_CTC = 0.813  # Closed timelike curve (CTC) coupling
 kappa_J4 = 0.813  # J4 coupling for phase dynamics
 kappa_worm = 0.01  # Wormhole coupling
-kappa_ent = 1.0  # Entanglement coupling (validated for optimal entanglement)
+kappa_ent = 1.0  # Entanglement coupling (optimized)
 kappa_J6 = 0.01  # J6 coupling
 kappa_J6_eff = 1e-33  # Effective J6 coupling
 kappa_ZPE = 0.1  # Zero-point energy coupling
@@ -23,7 +23,7 @@ kappa_grav = 1e-2  # Gravitational coupling
 kappa_grav2 = 0.05  # Gravitational-entanglement coupling
 eta_CTC = 0.05  # CTC feedback strength
 kappa_g = 0.1  # Gravitational gate coupling
-beta_ZPE = 1e-3  # Zero-point energy phase factor
+beta_ZPE = 1e-3  # ZPE phase factor
 d_c = 1e-9  # Characteristic length (m)
 lambda_v = 0.33333333326  # Vertex scaling for Tetbit
 beta = 1e-3  # Scalar field coupling
@@ -37,7 +37,7 @@ config = {
     'vertex_lambda': lambda_v  # Vertex scaling for spacetime encoding
 }
 
-# 6D grid setup (original dimensions)
+# 6D grid setup
 nx, ny, nz, nt, nw1, nw2 = 5, 5, 5, 5, 3, 3  # Dimensions: x, y, z, t, w1, w2
 N = nx * ny * nz * nt * nw1 * nw2  # Total grid points: 5625
 dx = l_p * 1e5  # Spatial step (m)
@@ -46,7 +46,7 @@ dw = l_p * 1e3  # Extra dimension step (m)
 grid_shape = (nx, ny, nz, nt, nw1, nw2)
 
 # Initialize Gaussian wave function in 6D Hilbert space
-alpha = 1.0 + 1.0j  # Coherent state amplitude
+alpha_values = [1.0 + 1.0j]  # Coherent state amplitude
 sigma = np.sqrt(hbar / 2)  # Gaussian width
 x = np.linspace(-5*dx, 5*dx, nx)
 y = np.linspace(-5*dx, 5*dx, ny)
@@ -56,17 +56,17 @@ w1 = np.linspace(-5*dw, 5*dw, nw1)
 w2 = np.linspace(-5*dw, 5*dw, nw2)
 X, Y, Z, T, W1, W2 = np.meshgrid(x, y, z, t, w1, w2, indexing='ij')
 r_6d = np.sqrt(X**2 + Y**2 + Z**2 + 0.1*(T**2 + W1**2 + W2**2))  # 6D radial distance
-psi = np.exp(-r_6d**2 / (2 * sigma**2)) * np.exp(1j * np.sqrt(2) * np.imag(alpha) * r_6d / hbar) / np.sqrt(np.prod([nx, ny, nz, nt, nw1, nw2]))
+psi = np.exp(-r_6d**2 / (2 * sigma**2)) * np.exp(1j * np.sqrt(2) * np.imag(alpha_values[0]) * r_6d / hbar) / np.sqrt(np.prod([nx, ny, nz, nt, nw1, nw2]))
 psi /= np.linalg.norm(psi)  # Normalize wave function
 psi_initial = psi.copy()  # Store initial state for fidelity
 psi_past = psi.copy()  # Store past state for CTC terms
 phi_N = np.random.uniform(-0.1, 0.1, (nx, ny, nz))  # Scalar field for fractal lattice
-bit_flips = 0  # Track Tetbit measurement-induced bit flips
+bit_flips = 0  # Track Tetbit bit flips
 coords = np.array(np.unravel_index(np.arange(N), grid_shape)).T  # 6D grid coordinates
 
 class DataLogger:
     """Logs simulation data to JSON file for analysis."""
-    def __init__(self, log_file="fdqc_simulation_log.json"):
+    def __init__(self, log_file="simulation_log.json"):
         self.log_file = log_file
         self.data = []
 
@@ -206,7 +206,7 @@ def fractal_dimension_max(phi_N, r, t, coords):
                 grad_phi_N[i, j, k] = np.sqrt(grad_x**2 + grad_y**2 + grad_z**2)
     d_f = 1.7 + 0.3 * np.tanh(np.abs(grad_phi_N)**2 / 0.1) + 0.05 * np.log(1 + r/l_p) * np.cos(2 * np.pi * t / T_c)
     multi_scale = sum(alpha * (r / (l_p * 10**(k-1)))**(d_f-3) * np.sin(2 * np.pi * t / (T_c * 10**(k-1)))
-                     for k, alpha in enumerate([0.02, 0.01, 0.005], 1))
+                      for k, alpha in enumerate([0.02, 0.01, 0.005], 1))
     d_f += multi_scale
     morley_adjustment = compute_morley_adjustment(coords)
     d_f += morley_adjustment
@@ -260,15 +260,17 @@ def hamiltonian_grav_ent_max(psi, d_f):
     r_6d = np.sqrt(np.sum([(coords[:,i] - 2)**2 * [1, 1, 1, 0.1, 0.1, 0.1][i] for i in range(6)], axis=0))
     psi_abs_sq = np.abs(psi)**2
     H_grav_ent = np.zeros_like(psi, dtype=np.complex128)
+    cutoff = 5.0  # Distance cutoff for interactions
     for idx in range(N):
         i, j, k, l, m, n = np.unravel_index(idx, grid_shape)
         r_diff = np.sqrt(np.sum([(coords[idx] - coords)**2 * [1, 1, 1, 0.1, 0.1, 0.1]], axis=1))
-        sum_term = np.sum(psi_abs_sq * (1/r_diff**4 + d_f * np.exp(-r_diff/l_p)) / (r_diff**4 + 1e-10))
+        mask = (r_diff < cutoff) & (r_diff > 1e-10)
+        sum_term = np.sum(psi_abs_sq[mask] * (1/r_diff[mask]**4 + d_f * np.exp(-r_diff[mask]/l_p)) / (r_diff[mask]**4 + 1e-10))
         H_grav_ent[i,j,k,l,m,n] = (kappa_grav + kappa_grav2 * d_f) * G * m_n * sum_term * psi[i,j,k,l,m,n]
     return H_grav_ent
 
 def hamiltonian(psi, psi_past, phi_N, t):
-    """Compute full 6D Hilbert Hamiltonian with fractal and exotic terms."""
+    """Compute 6D Hilbert Hamiltonian with fractal and exotic terms."""
     H_kin = np.zeros_like(psi, dtype=np.complex128)
     H_pot = np.zeros_like(psi, dtype=np.complex128)
     H_worm = np.zeros_like(psi, dtype=np.complex128)
@@ -324,7 +326,7 @@ def compute_cv_entanglement(psi, coords):
                 p2 = [-1j * hbar * (psi[(idx2[d]+1 if d<3 else idx2[d])%grid_shape[d], *(idx2[:d]+idx2[d+1:])] - 
                                     psi[(idx2[d]-1 if d<3 else idx2[d])%grid_shape[d], *(idx2[:d]+idx2[d+1:])]) / (2 * [dx, dx, dx, dt, dw, dw][d]) 
                                     for d in range(6)]
-                phase = np.exp(1j * np.pi * t / T_c)
+                phase = np.exp(1j * np.pi * t / T_c)  # Temporal vector lattice
                 cov[2*d, 2*d+6] = np.real(np.conj(x[d]) * x2[d] * phase)
                 cov[2*d+1, 2*d+7] = np.real(np.conj(p[d]) * p2[d] * phase)
     det = np.linalg.det(cov)
@@ -381,7 +383,7 @@ bell_violation_count = 0
 
 # Main simulation loop
 for run in range(runs):
-    psi = np.exp(-r_6d**2 / (2 * sigma**2)) * np.exp(1j * np.sqrt(2) * np.imag(alpha) * r_6d / hbar) / np.sqrt(np.prod([nx, ny, nz, nt, nw1, nw2]))
+    psi = np.exp(-r_6d**2 / (2 * sigma**2)) * np.exp(1j * np.sqrt(2) * np.imag(alpha_values[0]) * r_6d / hbar) / np.sqrt(np.prod([nx, ny, nz, nt, nw1, nw2]))
     psi /= np.linalg.norm(psi)
     psi_initial = psi.copy()
     psi_past = psi.copy()
@@ -434,7 +436,7 @@ for run in range(runs):
         logger.log({
             "run": run,
             "step": t_idx,
-            "alpha": str(alpha),
+            "alpha": str(alpha_values[0]),
             "kappa_ZPE": kappa_ZPE,
             "kappa_CTC": kappa_CTC,
             "beta_ZPE": beta_ZPE,
@@ -458,11 +460,11 @@ for run in range(runs):
         
         psi_past = psi.copy()
 
-# Summarize and visualize results
+# Summarize results
 avg_log_neg = np.mean(entanglement_history)
 std_log_neg = np.std(entanglement_history)
 avg_von_neumann = np.mean(von_neumann_history)
-print(f"FDQC Simulation Results (1 run, 50 iterations, N={N}):")
+print(f"Optimized Simulation Results (1 run, 50 iterations, N={N}):")
 print(f"Avg Log Negativity: {avg_log_neg:.3f} ± {std_log_neg:.3f}")
 print(f"Avg von Neumann Entropy: {avg_von_neumann:.3f}")
 print(f"Final Fidelity: {fidelity_history[-1]:.3f}")
@@ -472,13 +474,13 @@ print(f"Bit Flips: {bit_flip_history[-1]}")
 print(f"Avg Ricci: {np.mean(ricci_history):.3e}")
 print(f"Bell Violations: {bell_violation_count}")
 
-# Plot entanglement and probability density evolution
+# Plot results
 plt.plot(np.arange(n_iterations), entanglement_history, label='Log Negativity')
 plt.xlabel('Iteration')
 plt.ylabel('Log Negativity')
 plt.title('Entanglement Entropy Evolution')
 plt.legend()
-plt.savefig('entanglement_entropy.png')
+plt.savefig('entanglement_entropy_scaled.png')
 plt.close()
 
 plt.plot(np.arange(n_iterations), von_neumann_history, label='von Neumann Entropy')
@@ -486,5 +488,5 @@ plt.xlabel('Iteration')
 plt.ylabel('von Neumann Entropy')
 plt.title('von Neumann Entropy Evolution')
 plt.legend()
-plt.savefig('von_neumann_entropy.png')
+plt.savefig('von_neumann_entropy_scaled.png')
 plt.close()
